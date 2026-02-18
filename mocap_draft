@@ -1,0 +1,93 @@
+#!/usr/bin/env python3
+"""
+VT LUNA Rover - Motion Capture Receiver Node (DRAFT)
+
+This is a DRAFT script. 
+trying to use ROS and mocap system together with RasberryPi
+the connection system is not 
+
+This node connects to the motion capture system and publishes the rover's
+position/orientation to ROS topics so the navigation controller can use it.
+
+SUPPORTED PROTOCOLS (uncomment the one your lab uses): we could use any of these depends on what is there, like wifi/routor
+  1. VRPN  - Most common (Vicon, OptiTrack, Qualisys all support this)
+  2. NatNet - OptiTrack's native protocol
+  3. UDP JSON - Simple custom UDP stream
+  4. ROS Topic - If the lab already publishes to a ROS topic
+
+Thing we can change after meeting
+  - MOCAP_SERVER_IP: IP address of the mocap computer
+  - MOCAP_PORT: port number
+  - RIGID_BODY_NAME: whatever name they give your rover in the mocap software
+  - PROTOCOL: which protocol the system uses
+"""
+
+import rospy
+import math
+import time
+import socket
+import json
+import struct
+from geometry_msgs.msg import PoseStamped, Twist, Point, Quaternion, TransformStamped
+from nav_msgs.msg import Odometry
+from std_msgs.msg import Header, Bool
+
+
+# ============================================================
+# CONFIGURATION - UPDATE AFTER WEDNESDAY'S MEETING
+# ============================================================
+MOCAP_SERVER_IP = ""   # this could vary depending on the mocap system
+MOCAP_PORT =                     # <-- VRPN 
+RIGID_BODY_NAME = "rover_1"         # <-- Name of your rover in mocap software
+PROTOCOL = "vrpn"                    # <-- Options: "vrpn", "natnet", "udp_json", "ros_topic"
+# ============================================================
+
+
+class MocapReceiverDraft:
+    def __init__(self):
+        rospy.init_node('mocap_receiver', anonymous=False)
+
+        # ---- ROS Parameters (can override from launch file) ----
+        self.server_ip = rospy.get_param('~mocap_ip', MOCAP_SERVER_IP)
+        self.port = rospy.get_param('~mocap_port', MOCAP_PORT)
+        self.body_name = rospy.get_param('~rigid_body_name', RIGID_BODY_NAME)
+        self.protocol = rospy.get_param('~protocol', PROTOCOL)
+
+        # ---- Publishers ----
+        # Main pose output - navigation_controller.py subscribes to this
+        self.pose_pub = rospy.Publisher('/mocap/pose', PoseStamped, queue_size=10)
+
+        # Odometry output - compatible with ROS navigation stack
+        self.odom_pub = rospy.Publisher('/mocap/odom', Odometry, queue_size=10)
+
+        # Status - so other nodes know if mocap is working
+        self.status_pub = rospy.Publisher('/mocap/connected', Bool, queue_size=10)
+
+        # ---- Tracking State ----
+        self.last_pose_time = None
+        self.pose_count = 0
+        self.connected = False
+
+        # ---- Previous pose for velocity calculation ----
+        self.prev_position = None
+        self.prev_time = None
+
+        rospy.loginfo("=" * 50)
+        rospy.loginfo("Motion Capture Receiver (DRAFT)")
+        rospy.loginfo(f"  Server: {self.server_ip}:{self.port}")
+        rospy.loginfo(f"  Rigid Body: {self.body_name}")
+        rospy.loginfo(f"  Protocol: {self.protocol}")
+        rospy.loginfo("=" * 50)
+
+        # ---- Start the right receiver based on protocol ----
+        if self.protocol == "vrpn":
+            self.run_vrpn()
+        elif self.protocol == "natnet":
+            self.run_natnet()
+        elif self.protocol == "udp_json":
+            self.run_udp_json()
+        elif self.protocol == "ros_topic":
+            self.run_ros_relay()
+        else:
+            rospy.logerr(f"Unknown protocol: {self.protocol}")
+            rospy.logerr("Options: vrpn, natnet, udp_json, ros_topic")
