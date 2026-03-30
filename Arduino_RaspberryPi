@@ -1,0 +1,51 @@
+char cmdBuffer[MAX_CMD_LEN];
+int cmdIndex = 0;
+
+void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
+
+  Serial.begin(115200); // baude rate must match in Python too
+  Serial.println("READY");
+}
+
+void loop() {
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+    if (c == '\n') {
+      cmdBuffer[cmdIndex] = '\0';
+      processCommand(cmdBuffer);
+      cmdIndex = 0;
+    }
+    else if (c != '\r') {
+      if (cmdIndex < MAX_CMD_LEN - 1) {
+        cmdBuffer[cmdIndex] = c;
+        cmdIndex++;
+      }
+    }
+  }
+}
+
+void processCommand(char* cmd) {
+  if (strcmp(cmd, "ON") == 0) {
+    digitalWrite(LED_BUILTIN, HIGH);
+    Serial.println("LED ON");
+  }
+  else if (strcmp(cmd, "OFF") == 0) {
+    digitalWrite(LED_BUILTIN, LOW);
+    Serial.println("LED OFF");
+  }
+  else if (strncmp(cmd, "PWM ", 4) == 0) {
+    int value = atoi(cmd + 4);
+    value = constrain(value, 0, 255); // PWM 0 off 255 max
+    analogWrite(LED_BUILTIN, value);
+    Serial.print("PWM=");
+    Serial.println(value);
+  }
+  else if (strcmp(cmd, "PING") == 0) {
+    Serial.println("PONG");
+  }
+  else {
+    Serial.print("UNKNOWN: ");
+    Serial.println(cmd);
+  }
+}
