@@ -1,0 +1,848 @@
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped
+from rclpy.qos import qos_profile_sensor_data
+import serial
+import time
+import math
+import threading
+
+PORT = "/dev/ttyACM0"
+BAUD = 115200
+
+ser = serial.Serial(PORT, BAUD, timeout=1)
+time.sleep(2)
+
+def send_command(cmd):
+    ser.write((cmd + "\n").encode("utf-8"))
+
+def quaternion_to_euler_degrees(x, y, z, w):
+    # roll (x-axis rotation)
+    sinr_cosp = 2 * (w * x + y * z)
+    cosr_cosp = 1 - 2 * (x * x + y * y)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+
+    # pitch (y-axis rotation)
+    sinp = 2 * (w * y - z * x)
+    if abs(sinp) >= 1:
+        pitch = math.copysign(math.pi / 2, sinp)
+    else:
+        pitch = math.asin(sinp)
+
+    # yaw (z-axis rotation)
+    siny_cosp = 2 * (w * z + x * y)
+    cosy_cosp = 1 - 2 * (y * y + z * z)
+    yaw = math.atan2(siny_cosp, cosy_cosp)
+
+    return (
+        math.degrees(roll),
+        math.degrees(pitch),
+        math.degrees(yaw)
+    )
+
+def distancebet(body1_pos, body2_pos):
+    x1, y1, z1 = body1_pos
+    x2, y2, z2 = body2_pos
+
+    dx = x2 - x1
+    dy = y2 - y1
+    dz = z2 - z1
+
+    return math.sqrt(dx**2 + dy**2 + dz**2)
+
+def anglebet(body1_pos, body2_pos):
+    x1, _, z1 = body1_pos
+    x2, _, z2 = body2_pos
+
+    dx = x2 - x1
+    dz = z2 - z1
+
+    angle_deg = -math.degrees(math.atan2(dz, dx))
+
+    while angle_deg > 180:
+        angle_deg -= 360
+    while angle_deg < -180:
+        angle_deg += 360
+
+    return angle_deg
+
+def normalize_angle_deg(angle):
+    while angle > 180:
+        angle -= 360
+    while angle < -180:
+        angle += 360
+    return angle
+
+def facing(qx, qy, qz, qw):
+    fx = 1 - 2*(qy*qy + qz*qz)
+    fz = 2*(qx*qz - qw*qy)
+
+    angle_deg = -math.degrees(math.atan2(fz, fx))
+
+    while angle_deg > 180:
+        angle_deg -= 360
+    while angle_deg < -180:
+        angle_deg += 360
+
+    return angle_deg
+
+class PositionReader(Node):
+    def __init__(self):
+        super().__init__('position_reader')
+        self.bod1an = None
+        self.body1an = None
+        self.face = None
+        self.body1_pos = None
+        self.body2_pos = None
+        self.body3_pos = None
+        self.body4_pos = None
+        self.body5_pos = None
+        self.setpos2 = (1.1504,.1522,-1.1164)
+        self.setpos3 = (-.9435,.1649,-1.1414)
+        self.setpos5 = None
+        self.state = True
+        self.step = 7
+        self.follow2 = False
+        self.follow3 = False
+        self.follow4 = False
+        self.follow5 = False
+        self.goo = False
+        self.set2 = False
+        self.set3 = False
+        self.set5 = False
+        self.ridset2 = False
+        self.ridset3 = False
+        self.ridset5 = False
+        self.done = False
+        self.filling = False
+        self.setbos = (-.1917,.1438,.9385)
+        self.setbosan = (25.55)
+        self.setb = False
+        self.ridsetb = False
+        self.orient = False
+
+        self.sub1 = self.create_subscription(
+            PoseStamped,
+            '/vrpn_mocap/RigidBod/pose',
+            self.pose_callback_1,
+            qos_profile_sensor_data
+        )
+
+        self.sub2 = self.create_subscription(
+            PoseStamped,
+            '/vrpn_mocap/RigidBod2/pose',
+            self.pose_callback_2,
+            qos_profile_sensor_data
+        )
+
+        self.sub3 = self.create_subscription(
+            PoseStamped,
+            '/vrpn_mocap/RigidBod3/pose',
+            self.pose_callback_3,
+            qos_profile_sensor_data
+        )
+
+        self.sub4 = self.create_subscription(
+            PoseStamped,
+            '/vrpn_mocap/RigidBod4/pose',
+            self.pose_callback_4,
+            qos_profile_sensor_data
+        )
+
+        self.sub5 = self.create_subscription(
+            PoseStamped,
+            '/vrpn_mocap/RigidBod5/pose',
+            self.pose_callback_5,
+            qos_profile_sensor_data
+        )
+
+
+
+
+        self.deadband = 3.0
+        self.min_speed = 60
+        self.max_speed = 250
+        self.kp = 0.9
+        self.last_cmd = None
+
+    def pose_callback_1(self, msg):
+        self.body1_pos = (
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        )
+        qx = msg.pose.orientation.x
+        qy = msg.pose.orientation.y
+        qz = msg.pose.orientation.z
+        qw = msg.pose.orientation.w
+
+        self.body1an = roll, pitch, yaw = quaternion_to_euler_degrees(qx, qy, qz, qw)
+        self.face = facing(qx, qy, qz, qw)
+
+        if self.setb:
+            self.setbos = (
+                msg.pose.position.x,
+                msg.pose.position.y,
+                msg.pose.position.z
+            )
+            self.setbosan = self.face
+
+            self.setb = False
+
+
+        if self.goo:
+            self.go()
+        elif self.follow2:
+            self.doit(self.body2_pos)
+        elif self.follow3:
+            self.doit(self.body3_pos)
+        elif self.ridset2:
+            self.doit(self.setpos2)
+        elif self.ridset3:
+            self.doit(self.setpos3)
+        elif self.ridset5:
+            self.doit(self.setpos5)
+        elif self.ridsetb:
+            self.doitan(self.setbos, self.setbosan)
+    def pose_callback_2(self, msg):
+        self.body2_pos = (
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        )
+
+        if self.set2:
+            self.setpos2 = (
+                msg.pose.position.x,
+                msg.pose.position.y,
+                msg.pose.position.z
+            )
+            self.set2 = False
+
+
+        if self.follow2:
+            self.doit(self.body2_pos)
+
+
+    def pose_callback_3(self, msg):
+        self.body3_pos = (
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        )
+
+        if self.set3:
+            self.setpos3 = (
+                msg.pose.position.x,
+                msg.pose.position.y,
+                msg.pose.position.z
+            )
+            self.set3 = False
+
+
+        if self.follow3:
+            self.doit(self.body3_pos)
+
+
+    def pose_callback_4(self, msg):
+        self.body4_pos = (
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        )
+        if self.follow4:
+            self.itdo(self.body4_pos)
+
+    def pose_callback_5(self, msg):
+        self.body5_pos = (
+            msg.pose.position.x,
+            msg.pose.position.y,
+            msg.pose.position.z
+        )
+
+        if self.set5:
+            self.setpos5 = (
+                msg.pose.position.x,
+                msg.pose.position.y,
+                msg.pose.position.z
+            )
+            self.set5 = False
+
+        if self.follow5:
+            self.doit(self.body5_pos)
+
+
+
+
+    def doitan(self, target_pos, target_face):
+        if self.body1_pos is None or target_pos is None or self.face is None or target_face >
+            return
+
+        STOP_DISTANCE = 0.0
+        DIST_TOL = 0.10
+
+        STRAIGHT_DEADBAND = 8.0
+        STEER_DEADBAND = 25.0
+        BACKUP_DEADBAND = 6.0
+
+        FACE_DEADBAND = 2.0
+
+        distance = distancebet(self.body1_pos, target_pos)
+        dist_error = distance - STOP_DISTANCE
+
+        # Only drive to position if we have not already reached it.
+        if not self.orient:
+            target_angle = anglebet(self.body1_pos, target_pos)
+            drive_error = normalize_angle_deg(target_angle - self.face)
+
+            if abs(dist_error) <= DIST_TOL:
+                send_command("F 0")
+                self.last_cmd = "F 0"
+                self.orient = True
+                print("Position reached. Now aligning orientation.")
+                return
+
+            move_speed = int(min(180, max(80, abs(dist_error) * 250)))
+
+            if dist_error > 0:
+                if abs(drive_error) <= STRAIGHT_DEADBAND:
+                    cmd = f"F {move_speed}"
+                elif abs(drive_error) <= STEER_DEADBAND:
+                    if drive_error > 0:
+                        cmd = f"FL {move_speed}"
+                    else:
+                        cmd = f"FR {move_speed}"
+                else:
+                    turn_speed = int(min(100, max(50, abs(drive_error) * 0.8)))
+                    if drive_error > 0:
+                        cmd = f"L {turn_speed}"
+                    else:
+                        cmd = f"R {turn_speed}"
+            else:
+                if abs(drive_error) <= BACKUP_DEADBAND:
+                    cmd = f"B {move_speed}"
+                else:
+                    turn_speed = int(min(100, max(50, abs(drive_error) * 0.8)))
+                    if drive_error > 0:
+                        cmd = f"L {turn_speed}"
+                    else:
+                        cmd = f"R {turn_speed}"
+
+        else:
+            # Orientation-only mode.
+            # Do not check position anymore here.
+            face_error = normalize_angle_deg(target_face - self.face)
+
+            print("Aligning orientation. face =", self.face, "target =", target_face, "error>
+
+            if abs(face_error) <= FACE_DEADBAND:
+                cmd = "F 0"
+                self.done = True
+                self.ridsetb = False
+                self.aligning_orientation = False
+                print("Reached saved position and orientation")
+
+            else:
+                turn_speed = int(min(70, max(35, abs(face_error) * 0.6)))
+
+                if face_error > 0:
+                    cmd = f"L {turn_speed}"
+                else:
+                    cmd = f"R {turn_speed}"
+
+        if cmd != self.last_cmd:
+            send_command(cmd)
+            self.last_cmd = cmd
+
+
+
+    def itdo(self,target):
+
+        if self.body1_pos is None or target is None or self.face is None:
+            return
+
+        xb = self.body1_pos[0]
+        yb = self.body1_pos[1]
+        zb = self.body1_pos[2]
+        xw = target[0]
+        yw = target[1]
+        zw = target[2]
+        roll = self.body1an[0]
+        pitch = self.body1an[1] + 44
+        yaw = self.body1an[2]
+        direc = self.face - 180
+        distance = distancebet(self.body1_pos, target)
+
+
+        target_angle = anglebet(self.body1_pos, target)
+        error = normalize_angle_deg(target_angle - direc)
+
+        STOP_DISTANCE = 0.6050
+      # 2 feet in meters
+        DIST_TOL = 0.01             # about 5 cm tolerance
+        TURN_ONLY_DEADBAND = .5   # must face target fairly well before moving
+        BACKUP_DEADBAND = 1.5       # your original angle deadband
+        STRAIGHT_DEADBAND = 6.0
+        STEER_DEADBAND = 0
+        dist_error = distance - STOP_DISTANCE
+
+        if abs(dist_error) <= DIST_TOL:
+            cmd = "B 0"
+            turn_speed = int(min(self.max_speed, max(self.min_speed, abs(error) * self.kp)))
+            if error > 0:
+                cmd = f"L {turn_speed}"
+            elif error > 0:
+                cmd = f"R {turn_speed}"
+            else:
+                cmd = "B 0"
+                if self.state:
+                    send_command("B 0")
+                    cmd = "bump"
+                    time.sleep(3)
+                    self.state = False
+
+        else:
+            move_speed = int(min(255, max(90, abs(dist_error) * 300)))
+
+            if dist_error > 0:
+                # too far away: move toward target
+                if abs(error) <= STRAIGHT_DEADBAND:
+                    cmd = f"B {move_speed}"
+
+                elif abs(error) <= STEER_DEADBAND:
+                    if error > 0:
+                        cmd = f"BR {move_speed}"
+                    else:
+                        cmd = f"BL {move_speed}"
+
+                else:
+                    turn_speed = int(min(self.max_speed, max(self.min_speed, abs(error) * se>
+                    if error > 0:
+                        cmd = f"L {turn_speed}"
+                    else:
+                        cmd = f"R {turn_speed}"
+
+            else:
+                # too close: only back up if aligned closely enough
+                if abs(error) <= BACKUP_DEADBAND:
+                    cmd = f"F {move_speed}"
+                else:
+                    turn_speed = int(min(self.max_speed, max(self.min_speed, abs(error) * se>
+                    if error > 0:
+                        cmd = f"L {turn_speed}"
+                    else:
+                        cmd = f"R {turn_speed}"
+
+
+        if cmd != self.last_cmd:
+            send_command(cmd)
+            self.last_cmd = cmd
+
+
+
+
+    def doit(self,target):
+
+        if self.body1_pos is None or target is None or self.face is None:
+            return
+
+        xb = self.body1_pos[0]
+        yb = self.body1_pos[1]
+        zb = self.body1_pos[2]
+        xw = target[0]
+        yw = target[1]
+        zw = target[2]
+        roll = self.body1an[0]
+        pitch = self.body1an[1] + 44
+        yaw = self.body1an[2]
+        direc = self.face
+        distance = distancebet(self.body1_pos, target)
+
+
+        target_angle = anglebet(self.body1_pos, target)
+        error = normalize_angle_deg(target_angle - direc)
+
+        if self.ridset5 or self.ridsetb:
+            STOP_DISTANCE = 0
+        else:
+            STOP_DISTANCE = 0.9096
+        DIST_TOL = 0.05             # about 5 cm tolerance
+        TURN_ONLY_DEADBAND = 12.0   # must face target fairly well before moving
+        BACKUP_DEADBAND = 3.0       # your original angle deadband
+        STRAIGHT_DEADBAND = 6.0
+        STEER_DEADBAND = 25.0
+        dist_error = distance - STOP_DISTANCE
+        if abs(dist_error) <= DIST_TOL:
+            cmd = "F 0"
+            self.done= True
+            turn_speed = int(min(self.max_speed, max(self.min_speed, abs(error) * self.kp)))
+            if error > 0 and not self.ridset5:
+                cmd = f"L {turn_speed}"
+            elif error > 0 and not self.ridset5:
+                cmd = f"R {turn_speed}"
+            else:
+                cmd = "F 0"
+
+        else:
+            move_speed = int(min(255, max(90, abs(dist_error) * 300)))
+
+            if dist_error > 0:
+                # too far away: move toward target
+                if abs(error) <= STRAIGHT_DEADBAND:
+                    cmd = f"F {move_speed}"
+
+                elif abs(error) <= STEER_DEADBAND:
+                    if error > 0:
+                        cmd = f"FL {move_speed}"
+                    else:
+                        cmd = f"FR {move_speed}"
+
+                else:
+                    turn_speed = int(min(self.max_speed, max(self.min_speed, abs(error) * se>
+                    if error > 0:
+                        cmd = f"L {turn_speed}"
+                    else:
+                        cmd = f"R {turn_speed}"
+
+            else:
+                # too close: only back up if aligned closely enough
+                if abs(error) <= BACKUP_DEADBAND:
+                    cmd = f"B {move_speed}"
+                else:
+                    turn_speed = int(min(self.max_speed, max(self.min_speed, abs(error) * se>
+                    if error > 0:
+                        cmd = f"L {turn_speed}"
+                    else:
+                        cmd = f"R {turn_speed}"
+
+        if cmd != self.last_cmd:
+            send_command(cmd)
+            self.last_cmd = cmd
+
+    def scoop(self):
+        if self.filling:
+            send_command("set")
+            time.sleep(.2)
+            send_command("arm -3")
+            time.sleep(.2)
+            send_command("F 90")
+            time.sleep(3)
+            send_command("pick")
+            time.sleep(1)
+            send_command("F 0")
+            send_command("asc 110")
+            time.sleep(.7)
+            send_command("scp 80")
+            time.sleep(2)
+            send_command("B 50")
+            time.sleep(1)
+            send_command("B 0")
+            send_command("pick")
+            self.state = True
+
+            self.filling = False
+
+    def go(self):
+        if not self.goo:
+            return
+
+        if self.step == 1:
+            self.ridset3 = True
+            self.ridset2 = False
+            self.ridset5 = False
+            self.follow4 = False
+
+            self.doit(self.setpos3)
+
+            if self.done:
+                self.ridset3 = False
+                self.done = False
+                self.last_cmd = None
+                self.step = 2
+                print("Step 1 done, going to step 2")
+
+        elif self.step == 2:
+            self.ridset2 = False
+            self.ridset3 = False
+            self.ridset5 = False
+            self.follow4 = False
+
+            self.filling = True
+            self.scoop()
+            self.filling = True
+            self.scoop()
+            self.step = 3
+            print("Step 2 done, going to step 3")
+
+        elif self.step == 3:
+            self.ridset2 = True
+            self.ridset3 = False
+            self.ridset5 = False
+            self.follow4 = False
+
+            self.doit(self.setpos2)
+
+            if self.done:
+                self.ridset2 = False
+                self.done = False
+                self.last_cmd = None
+                self.step = 4
+                print("Step 3 done, going to step 4")
+
+        elif self.step == 4:
+            self.ridset2 = False
+            self.ridset3 = False
+            self.ridset5 = False
+            self.follow4 = False
+
+            self.filling = True
+            self.scoop()
+            self.filling = True
+            self.scoop()
+            self.step = 5
+            print("Step 4 done, going to step 5")
+            self.orient = False
+
+        elif self.step == 5:
+            self.ridset2 = False
+            self.ridset3 = False
+            self.ridsetb = True
+            self.follow4 = False
+
+            self.doitan(self.setbos,self.setbosan)
+
+            if self.done:
+                self.ridset5 = False
+                self.done = False
+                self.last_cmd = None
+                self.step = 6
+                print("Step 5 done, going to step 6")
+
+        elif self.step == 6:
+            self.ridset2 = False
+            self.ridset3 = False
+            self.ridset5 = False
+            self.follow4 = True
+
+            self.itdo(self.body4_pos)
+
+            if self.state == False:
+                self.follow4 = False
+                self.last_cmd = None
+                self.step = 7
+                self.orient = False
+                print("Step 6 done, going to step 7")
+                self.done = False
+
+        elif self.step == 7:
+            self.ridset2 = False
+            self.ridset3 = False
+            self.ridsetb = True
+            self.follow4 = False
+
+            self.doit(self.setbos)
+
+            if self.done:
+                self.ridsetb = False
+                self.done = False
+                self.last_cmd = None
+                self.step = 1
+                send_command("F 0")
+                print("Go sequence complete")
+
+
+
+def keyboard_loop(node):
+    try:
+        while True:
+            cmd = input("Enter command (follow, S, q, or Arduino cmd): ").strip()
+
+            if cmd.lower() == "q":
+                send_command("F 0")
+                rclpy.shutdown()
+                break
+            elif cmd.lower() == "go":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.follow5 = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.ridset5 = False
+                node.filling = False
+                node.last_cmd = None
+                node.done = False
+                node.step = 1
+                node.goo = True
+                print("Go sequence ON")
+
+            elif cmd.lower() == "rid2":
+                node.follow2 = True
+                node.follow3 = False
+                node.follow4 = False
+                node.filling = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.ridset5 = False
+                print("Follow mode ON")
+
+
+            elif cmd.lower() == "rid3":
+                node.follow3 = True
+                node.follow2 = False
+                node.follow4 = False
+                node.filling = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.ridset5 = False
+                print("Follow mode ON")
+
+            elif cmd == "S":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.last_cmd = None
+                node.filling = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.ridset5 = False
+                node.goo = False
+                send_command("F 0")
+                print("Follow mode OFF")
+
+            elif cmd == "empty":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = True
+                node.filling = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.last_cmd = None
+
+                node.ridset5 = False
+
+            elif cmd == "scoop":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.filling = True
+                node.last_cmd = None
+                node.set3 = False
+                node.set3 = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.scoop()
+                node.ridset5 = False
+
+            elif cmd == "set2":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.filling = False
+                node.last_cmd = None
+                node.set2 = True
+
+
+            elif cmd == "ridset2":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.filling = False
+                node.last_cmd = None
+                node.set2 = False
+                node.ridset2 = True
+                node.ridset3 = False
+                node.ridset5 = False
+
+            elif cmd == "set3":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.filling = False
+                node.last_cmd = None
+                node.set3 = True
+
+            elif cmd == "ridset3":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.filling = False
+                node.last_cmd = None
+                node.ridset2 = False
+                node.ridset3 = True
+                node.ridset5 = False
+
+            elif cmd == "set5":
+               node.follow2 = False
+               node.follow3 = False
+               node.follow4 = False
+               node.filling = False
+               node.last_cmd = None
+               node.set5 = True
+
+
+            elif cmd == "ridset5":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.filling = False
+                node.last_cmd = None
+                node.ridset2 = False
+                node.ridset3 = False
+                node.ridset5 = True
+
+            elif cmd == "setb":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.follow5 = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.ridset5 = False
+                node.ridsetb = False
+                node.filling = False
+                node.last_cmd = None
+
+                node.setb = True
+                print("Saving current bot position and orientation on next pose update")
+
+            elif cmd == "ridsetb":
+                node.follow2 = False
+                node.follow3 = False
+                node.follow4 = False
+                node.follow5 = False
+                node.ridset2 = False
+                node.ridset3 = False
+                node.ridset5 = False
+                node.filling = False
+                node.last_cmd = None
+                node.orient = False
+                node.done = False
+
+                if node.setbos is not None and node.setbosan is not None:
+                    node.ridsetb = True
+                else:
+                    print("No saved bot position/orientation yet. Type setb first.")
+
+
+            else:
+                send_command(cmd)
+    except KeyboardInterrupt:
+        pass
+
+def main():
+    rclpy.init()
+    node = PositionReader()
+
+    input_thread = threading.Thread(target=keyboard_loop, args=(node,), daemon=True)
+    input_thread.start()
+
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+        ser.close()
+
+if __name__ == '__main__':
+    main()
