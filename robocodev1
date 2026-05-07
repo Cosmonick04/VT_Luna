@@ -378,10 +378,9 @@ class PositionReader(Node):
         error = normalize_angle_deg(target_angle - direc)
 
         STOP_DISTANCE = 0.6050
-      # 2 feet in meters
-        DIST_TOL = 0.01             # about 5 cm tolerance
-        TURN_ONLY_DEADBAND = .5   # must face target fairly well before moving
-        BACKUP_DEADBAND = 1.5       # your original angle deadband
+        DIST_TOL = 0.01            
+        TURN_ONLY_DEADBAND = .5 
+        BACKUP_DEADBAND = 1.5       
         STRAIGHT_DEADBAND = 6.0
         STEER_DEADBAND = 0
         dist_error = distance - STOP_DISTANCE
@@ -466,9 +465,9 @@ class PositionReader(Node):
             STOP_DISTANCE = 0
         else:
             STOP_DISTANCE = 0.9096
-        DIST_TOL = 0.05             # about 5 cm tolerance
-        TURN_ONLY_DEADBAND = 12.0   # must face target fairly well before moving
-        BACKUP_DEADBAND = 3.0       # your original angle deadband
+        DIST_TOL = 0.05           
+        TURN_ONLY_DEADBAND = 12.0  
+        BACKUP_DEADBAND = 3.0      
         STRAIGHT_DEADBAND = 6.0
         STEER_DEADBAND = 25.0
         dist_error = distance - STOP_DISTANCE
