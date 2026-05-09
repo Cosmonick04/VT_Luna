@@ -1,0 +1,190 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fmodern\fcharset0 Courier;}
+{\colortbl;\red255\green255\blue255;\red167\green9\blue245;\red0\green128\blue19;\red14\green0\blue255;
+}
+{\*\expandedcolortbl;;\csgenericrgb\c65490\c3529\c96078;\csgenericrgb\c0\c50196\c7451;\csgenericrgb\c5490\c0\c100000;
+}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f0\fs20 \cf0 clear; clc; close \cf2 all\cf0 ;\
+\
+\cf3 %% ============================================================\
+% CONSTANTS\
+%% ============================================================\
+\cf0 eps0 = 8.854187817e-12;\
+\
+rho = 3000;\
+Cp  = 700;\
+\
+eta = 0.25;\
+f   = 0.915e9;\
+omega = 2*pi*f;\
+\
+Psys = 4000;\
+\
+A_tile = 0.05845671;\
+tile_thickness = 0.106;\
+\
+Tamb_C   = 0;\
+T_env_K  = 390;\
+\
+eps_rad  = 0.95;\
+sigma_SB = 5.67e-8;\
+\
+F_view = 0.08;   \cf3 % tight mold assumption\
+\
+\cf0 t_delay = 10;\
+\
+dt = 1;\
+t_max = 5000;\
+\
+c = 3e8;\
+\
+\cf3 %% ============================================================\
+% COLE-COLE PARAMETERS\
+%% ============================================================\
+\cf0 a0 = 8.2865; a1 = .0019;\
+b0 = 388.6143; b1 = 1;\
+tau0 = .0068; E_eff = 3091.1;\
+c0 = .2673; c1 = .00073416;\
+\
+a02 = .00013506; a12 = .00025665;\
+b02 = 297.4067; b12 = .9998;\
+tau02 = .0083; E_eff2 = 6527.3;\
+c02 = .31; c12 = .00045602;\
+\
+\cf3 %% ============================================================\
+% DESIGN SPACE (FIXED)\
+%% ============================================================\
+\cf0 layercount = 5:1:212;\
+h_vec = tile_thickness./layercount;   \cf3 % <-- extended below 2 mm\
+\
+\cf0 total_time = nan(size(h_vec));\
+\
+\cf3 %% ============================================================\
+% MAIN LOOP\
+%% ============================================================\
+\cf4 for \cf0 i = 1:length(h_vec)\
+\
+    h = h_vec(i);\
+\
+    N_layers = ceil(tile_thickness / h);\
+    V = A_tile * h;\
+\
+\cf3     %% dielectric estimate\
+\cf0     T_est = 300;\
+    Tk_est = T_est + 273.15;\
+\
+    kT = (a0+a1*T_est) + real((b0+b1*T_est) ./ \cf4 ...\
+\cf0         (1+(1i*omega*tau0*exp(E_eff/Tk_est)).^(1-(c0+c1*T_est))));\
+\
+    tanT = (a02+a12*T_est) + real((b02+b12*T_est) ./ \cf4 ...\
+\cf0         (1+(1i*omega*tau02*exp(E_eff2/Tk_est)).^(1-(c02+c12*T_est))));\
+\
+    eps_imag = kT * tanT;\
+\
+    Ereq = sqrt((Psys * eta) / (V * omega * eps0 * eps_imag));\
+\
+\cf3     %% ========================================================\
+\cf0     \cf3 % HEATING SIMULATION\
+    %% ========================================================\
+\cf0     T = Tamb_C;\
+    t = 0;\
+\
+    \cf4 while \cf0 T < 1200 && t < t_max\
+\
+        Tk = T + 273.15;\
+\
+        k = (a0+a1*T) + real((b0+b1*T) ./ \cf4 ...\
+\cf0             (1+(1i*omega*tau0*exp(E_eff/Tk)).^(1-(c0+c1*T))));\
+\
+        tan = (a02+a12*T) + real((b02+b12*T) ./ \cf4 ...\
+\cf0             (1+(1i*omega*tau02*exp(E_eff2/Tk)).^(1-(c02+c12*T))));\
+\
+        eps_imag_local = k * tan;\
+\
+\cf3         %% ---------------- MICROWAVE PENETRATION ----------------\
+\cf0         delta = c / (2*pi*f*sqrt(max(eps_imag_local,1e-6)));\
+\
+        eta_pen = 1 / (1 + h / max(delta,1e-6));\
+\
+        P_vol = omega * eps0 * eps_imag_local * (Ereq^2);\
+        P_vol = P_vol * eta_pen;\
+\
+\cf3         %% ---------------- RADIATION LOSS ----------------\
+\cf0         q_rad = eps_rad * sigma_SB * (Tk^4 - T_env_K^4) * F_view;\
+        q_rad = q_rad / max(h,1e-4);\
+\
+\cf3         %% ---------------- CONDUCTION (MOLD LIMITED) ----------------\
+\cf0         k_mold = 1.2;\
+        q_cond = k_mold * (T - Tamb_C) / max(h,1e-3);\
+\
+\cf3         %% ---------------- NET POWER ----------------\
+\cf0         P_net = P_vol - q_rad - q_cond;\
+        P_net = max(P_net, 0);  \cf3 % stability clamp\
+\
+\cf0         dTdt = P_net / (rho * Cp);\
+\
+        T = T + dTdt * dt;\
+        t = t + dt;\
+\
+        \cf4 if \cf0 t > t_max\
+            \cf4 break\cf0 ;\
+        \cf4 end\
+\cf0     \cf4 end\
+\
+\cf3     %% ========================================================\
+\cf0     \cf3 % MANUFACTURING / PACKING PENALTY (KEY FIX)\
+    %% ========================================================\
+\cf0     manufacturing_penalty = 0.05 * (0.002 / h);\
+\
+\cf3     %% ========================================================\
+\cf0     \cf3 % STORE RESULT\
+    %% ========================================================\
+\cf0     \cf4 if \cf0 T >= 1200\
+        total_time(i) = N_layers * (t + t_delay) * (1 + manufacturing_penalty);\
+    \cf4 else\
+\cf0         total_time(i) = NaN;\
+    \cf4 end\
+\
+end\
+\
+\cf3 %% ============================================================\
+% SAFE OPTIMIZATION\
+%% ============================================================\
+\cf0 valid = isfinite(total_time);\
+\
+\cf4 if \cf0 ~any(valid)\
+    error(\cf2 "No valid solutions found."\cf0 );\
+\cf4 end\
+\
+\cf0 h_valid = h_vec(valid);\
+t_valid = total_time(valid);\
+\
+[min_time, idx_rel] = min(t_valid);\
+\
+best_h = h_valid(idx_rel);\
+best_h = best_h(1);\
+\
+best_N = ceil(tile_thickness / best_h);\
+\
+\cf3 %% ============================================================\
+% OUTPUT\
+%% ============================================================\
+\cf0 fprintf(\cf2 '\\n========== FINAL STABLE OPTIMIZATION ==========\\n'\cf0 );\
+fprintf(\cf2 'Best layer height: %.5f m\\n'\cf0 , best_h);\
+fprintf(\cf2 'Number of layers: %d\\n'\cf0 , best_N);\
+fprintf(\cf2 'Total time: %.2f s (%.2f hr)\\n'\cf0 , min_time, min_time/3600);\
+fprintf(\cf2 '==============================================\\n'\cf0 );\
+\
+\cf3 %% ============================================================\
+% PLOT\
+%% ============================================================\
+\cf0 figure;\
+plot(h_vec, total_time/3600, \cf2 'LineWidth'\cf0 , 2);\
+xlabel(\cf2 'Layer height (m)'\cf0 );\
+ylabel(\cf2 'Total time (hours)'\cf0 );\
+title(\cf2 'Optimized Layer Height (Fixed Boundary Bias)'\cf0 );\
+grid \cf2 on\cf0 ;\
+}

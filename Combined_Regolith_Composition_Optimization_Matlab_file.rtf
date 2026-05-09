@@ -1,0 +1,723 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fmodern\fcharset0 Courier;}
+{\colortbl;\red255\green255\blue255;\red167\green9\blue245;\red0\green128\blue19;\red14\green0\blue255;
+}
+{\*\expandedcolortbl;;\csgenericrgb\c65490\c3529\c96078;\csgenericrgb\c0\c50196\c7451;\csgenericrgb\c5490\c0\c100000;
+}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f0\fs20 \cf0 clear; clc; close \cf2 all\cf0 ;\
+\
+\cf3 %% ============================================================\
+% COMBINED LUNAR REGOLITH COMPOSITION + LAYER OPTIMIZATION\
+% Uses FeO/TiO2 + normalized oxides to calculate dielectric inputs,\
+% then runs layer-height heating optimization.\
+%% ============================================================\
+\
+\cf0 fprintf(\cf2 'Recommended ranges:\\n'\cf0 );\
+fprintf(\cf2 'FeO:  1 to 20 %%\\n'\cf0 );\
+fprintf(\cf2 'TiO2: 1 to 15 %%\\n'\cf0 );\
+fprintf(\cf2 'Microwave Frequency: 915 to 5800 MHz\\n\\n'\cf0 );\
+\
+\cf3 %% ============================================================\
+% USER INPUTS\
+%% ============================================================\
+\
+\cf0 %\{\
+OLD INPUT CODE\
+\
+FeO = input('Enter FeO concentration (%): ');\
+TiO2 = input('Enter TiO2 concentration (%): ');\
+freqMHz = input('Enter microwave frequency (MHz) [default 930]: ');\
+targetTemp = input('Enter target sintering temperature (C), recommended 1120-1230 [default 1200]: ');\
+heatMapStep = input('Enter FeO/TiO2 heat-map step interval (%) [default 1]: ');\
+\
+if isempty(freqMHz)\
+    freqMHz = 930;\
+end\
+\
+if isempty(targetTemp)\
+    targetTemp = 1200;\
+end\
+\
+if isempty(heatMapStep)\
+    heatMapStep = 1;\
+end\
+\
+if heatMapStep <= 0\
+    error('Heat-map step interval must be greater than 0.');\
+end\
+\
+if FeO < 1 || FeO > 20\
+    warning('FeO is outside the recommended range of 1 to 20%%.');\
+end\
+\
+if TiO2 < 1 || TiO2 > 15\
+    warning('TiO2 is outside the recommended range of 1 to 15%%.');\
+end\
+\
+if FeO + TiO2 >= 100\
+    error('FeO + TiO2 must be less than 100%%.');\
+end\
+\
+if freqMHz < 915 || freqMHz > 5800\
+    warning('Frequency is outside the recommended range of 915 to 5800 MHz.');\
+end\
+\
+%\} \
+\
+\
+FeO = input(\cf2 'Enter FeO concentration (%): '\cf0 );\
+TiO2 = input(\cf2 'Enter TiO2 concentration (%): '\cf0 );\
+freqMHz = input(\cf2 'Enter microwave frequency (MHz) [default 930]: '\cf0 );\
+targetTemp = input(\cf2 'Enter target sintering temperature (C), recommended 1120-1230 [default 1200]: '\cf0 );\
+heatMapStep = input(\cf2 'Enter FeO/TiO2 heat-map step interval (%) [default 1]: '\cf0 );\
+\
+\cf4 if \cf0 FeO < 0 || FeO > 20\
+    warning(\cf2 'FeO outside recommended range of 0-20%%.'\cf0 );\
+\cf4 end\
+\
+if \cf0 TiO2 < 0 || TiO2 > 15\
+    warning(\cf2 'TiO2 outside recommended range of 0-15%%.'\cf0 );\
+\cf4 end\
+\
+if \cf0 FeO + TiO2 >= 100\
+    error(\cf2 'FeO + TiO2 must be less than 100%%.'\cf0 );\
+\cf4 end\
+if \cf0 freqMHz < 915 || freqMHz > 5800\
+    warning(\cf2 'Frequency is outside the recommended range of 915 to 5800 MHz.'\cf0 );\
+\cf4 end\
+if \cf0 isempty(heatMapStep)\
+    heatMapStep = 1;\
+\cf4 end\
+\
+if \cf0 heatMapStep <= 0\
+    error(\cf2 'Heat-map step interval must be greater than 0.'\cf0 );\
+\cf4 end\
+\
+\cf3 %% Default base oxide composition\
+\cf0 baseSiO2  = 45;\
+baseAl2O3 = 15;\
+baseMgO   = 10;\
+baseCaO   = 10;\
+\
+changeBase = input(\cf2 'Do you want to change SiO2, Al2O3, MgO, and CaO values? Enter 1 for yes, 0 for no: '\cf0 );\
+\
+\cf4 if \cf0 changeBase == 1\
+    baseSiO2  = input(\cf2 'Enter SiO2 concentration before normalization (%): '\cf0 );\
+    baseAl2O3 = input(\cf2 'Enter Al2O3 concentration before normalization (%): '\cf0 );\
+    baseMgO   = input(\cf2 'Enter MgO concentration before normalization (%): '\cf0 );\
+    baseCaO   = input(\cf2 'Enter CaO concentration before normalization (%): '\cf0 );\
+\cf4 end\
+\
+\cf0 baseTotal = baseSiO2 + baseAl2O3 + baseMgO + baseCaO;\
+\
+\cf4 if \cf0 baseTotal <= 0\
+    error(\cf2 'SiO2 + Al2O3 + MgO + CaO must be greater than zero.'\cf0 );\
+\cf4 end\
+\
+\cf3 %% Normalize remaining oxides around FeO and TiO2\
+\cf0 remaining = 100 - FeO - TiO2;\
+scale = remaining/baseTotal;\
+\
+SiO2  = baseSiO2*scale;\
+Al2O3 = baseAl2O3*scale;\
+MgO   = baseMgO*scale;\
+CaO   = baseCaO*scale;\
+\
+composition = [SiO2 Al2O3 MgO CaO FeO TiO2]/100;\
+materials = \{\cf2 'SiO2'\cf0 ,\cf2 'Al2O3'\cf0 ,\cf2 'MgO'\cf0 ,\cf2 'CaO'\cf0 ,\cf2 'FeO'\cf0 ,\cf2 'TiO2'\cf0 \};\
+\
+\cf3 %% ============================================================\
+% SPECIFIC HEAT CALCULATION FOR NEW REGOLITH COMPOSITION\
+%% ============================================================\
+\
+% Approximate room/high-temperature oxide Cp values [J/kg-K]\
+% These are engineering estimates for mixed lunar regolith modeling.\
+\cf0 Cp_SiO2  = 730;\
+Cp_Al2O3 = 880;\
+Cp_MgO   = 920;\
+Cp_CaO   = 750;\
+Cp_FeO   = 725;\
+Cp_TiO2  = 690;\
+\
+Cp_vals = [Cp_SiO2 Cp_Al2O3 Cp_MgO Cp_CaO Cp_FeO Cp_TiO2];\
+\
+Cp_regolith = sum(composition .* Cp_vals);\
+\
+fprintf(\cf2 '\\n----------- NORMALIZED COMPOSITION -----------\\n'\cf0 );\
+\cf4 for \cf0 i = 1:length(materials)\
+    fprintf(\cf2 '%s: %.2f%%\\n'\cf0 ,materials\{i\},composition(i)*100);\
+\cf4 end\
+\
+\cf0 fprintf(\cf2 '\\nCalculated bulk Cp for this regolith: %.2f J/kg-K\\n'\cf0 ,Cp_regolith);\
+fprintf(\cf2 '---------------------------------------------\\n'\cf0 );\
+\
+\cf3 %% Use this Cp in the rest of the thermal model\
+\cf0 Cp = Cp_regolith;\
+cp_small = Cp_regolith;\
+\
+\
+\cf3 %% ============================================================\
+% CONSTANTS FROM OPTIMIZATION CODE\
+%% ============================================================\
+\cf0 eps0 = 8.854187817e-12;\
+c = 3e8;\
+\
+rho = 3000;              \cf3 % kg/m^3\
+\cf0 Cp  = Cp_regolith;               \cf3 % J/kg-K\
+\
+\cf0 f = freqMHz*1e6;         \cf3 % Hz\
+\cf0 omega = 2*pi*f;\
+lambda = c/f;\
+\
+Psys = 4500;             \cf3 % W, 4.5 kW microwave source power\
+\cf0 couplingEfficiency = 0.63; \cf3 % 63% coupling efficiency\
+\
+\cf0 A_tile = 0.05845671;     \cf3 % m^2\
+\cf0 tile_thickness = 0.106;  \cf3 % m\
+\
+\cf0 Tamb_C   = 25;           \cf3 % C\
+\cf0 T_env_K  = 298.15;       \cf3 % K\
+\
+\cf0 eps_rad  = 0.95;\
+sigma_SB = 5.670374419e-8;\
+F_view = 0.08;           \cf3 % tight mold assumption\
+\
+\cf0 t_delay = 10;             \cf3 % seconds per layer, Nick wants 10s\
+\
+\cf0 dt = 1;\
+t_max = 5000;\
+\
+\cf3 %% ============================================================\
+% NORMALIZED REGOLITH COMPOSITION FROM FeO AND TiO2\
+%% ============================================================\
+\cf0 baseSiO2  = 45;\
+baseAl2O3 = 15;\
+baseMgO   = 10;\
+baseCaO   = 10;\
+\
+remaining = 100 - FeO - TiO2;\
+scale = remaining/(baseSiO2 + baseAl2O3 + baseMgO + baseCaO);\
+\
+SiO2  = baseSiO2*scale;\
+Al2O3 = baseAl2O3*scale;\
+MgO   = baseMgO*scale;\
+CaO   = baseCaO*scale;\
+\
+composition = [SiO2 Al2O3 MgO CaO FeO TiO2]/100;\
+materials = \{\cf2 'SiO2'\cf0 ,\cf2 'Al2O3'\cf0 ,\cf2 'MgO'\cf0 ,\cf2 'CaO'\cf0 ,\cf2 'FeO'\cf0 ,\cf2 'TiO2'\cf0 \};\
+\
+\cf3 %% ============================================================\
+% COMPOSITION-BASED DIELECTRIC PROPERTIES\
+% These approximate values turn oxide weight percent into eps' and eps''.\
+%% ============================================================\
+\cf0 epsVals = [\
+    3.8  - 1i*0.02\
+    9.5  - 1i*0.05\
+    9.8  - 1i*0.08\
+    11.8 - 1i*0.06\
+    14.0 - 1i*0.50\
+    85.0 - 1i*8.00\
+];\
+\
+epsEff = sum(composition'.*epsVals);\
+epsReal_comp = real(epsEff);\
+epsLoss_comp = -imag(epsEff);\
+lossTan_comp = epsLoss_comp/epsReal_comp;\
+\
+nComplex = sqrt(epsEff);\
+alpha = (2*pi/lambda)*abs(imag(nComplex));\
+\
+\cf3 %% ============================================================\
+% REFLECTIVE MICROWAVE CONTAINER ABSORPTION MODEL\
+%% ============================================================\
+\cf0 sampleThickness = 0.01;      \cf3 % m\
+\cf0 reflectionEfficiency = 0.90;\
+numReflections = 12;\
+\
+singlePassAbs = 1 - exp(-2*alpha*sampleThickness);\
+\
+totalAbsorption = 0;\
+remainingPower = 1;\
+\
+\cf4 for \cf0 r = 1:numReflections\
+    absorbed = remainingPower*singlePassAbs;\
+    totalAbsorption = totalAbsorption + absorbed;\
+\
+    remainingPower = remainingPower*(1 - singlePassAbs)*reflectionEfficiency;\
+\cf4 end\
+\
+\cf0 eta = couplingEfficiency*totalAbsorption;\
+absorbedPowerRaw = Psys*eta;\
+\
+\cf3 %% ============================================================\
+% TEMPERATURE CHECK MODEL FOR FIGURE 1\
+%% ============================================================\
+\cf0 targetSinterTime = 4*60;\
+sinterLow = 1120;\
+sinterHigh = 1230;\
+\
+sampleMass = 0.050;\
+density_small = 1600;\
+cp_small = 750;\
+volume_small = sampleMass/density_small;\
+L = volume_small^(1/3);\
+surfaceArea = 6*L^2;\
+epsilon_small = 0.85;\
+\
+tEnd = 10*60;\
+time = 0:dt:tEnd;\
+Tcurve = zeros(size(time));\
+Tcurve(1) = Tamb_C;\
+\
+requiredEnergy = sampleMass*cp_small*(sinterLow - Tamb_C);\
+calibratedPower = requiredEnergy/targetSinterTime;\
+absorbedPower = 0.5*absorbedPowerRaw + 0.5*calibratedPower;\
+\
+\cf4 for \cf0 k = 2:length(time)\
+    TprevK = Tcurve(k-1) + 273.15;\
+    \cf3 % Radiation reduced by mold/view factor, same assumption as optimization model\
+\cf0     Prad = epsilon_small*sigma_SB*surfaceArea*(TprevK^4 - T_env_K^4)*F_view;\
+    Pnet = max(absorbedPower - Prad,0);\
+    dTdt = Pnet/(sampleMass*cp_small);\
+    Tcurve(k) = Tcurve(k-1) + dTdt*dt;\
+\cf4 end\
+\
+\cf0 idx = find(Tcurve >= sinterLow,1);\
+\cf4 if \cf0 isempty(idx)\
+    timeToSinter = NaN;\
+\cf4 else\
+\cf0     timeToSinter = time(idx)/60;\
+\cf4 end\
+\
+\cf3 %% ============================================================\
+% COLE-COLE TEMPERATURE FACTOR FROM ORIGINAL OPTIMIZATION CODE\
+% The factor keeps the original temperature trend but scales the loss\
+% to the FeO/TiO2 composition-based epsLoss_comp.\
+%% ============================================================\
+\cf0 a0 = 8.2865; a1 = .0019;\
+b0 = 388.6143; b1 = 1;\
+tau0 = .0068; E_eff = 3091.1;\
+c0 = .2673; c1 = .00073416;\
+\
+a02 = .00013506; a12 = .00025665;\
+b02 = 297.4067; b12 = .9998;\
+tau02 = .0083; E_eff2 = 6527.3;\
+c02 = .31; c12 = .00045602;\
+\
+T_ref = 300;\
+Tk_ref = T_ref + 273.15;\
+k_ref = (a0+a1*T_ref) + real((b0+b1*T_ref) ./ \cf4 ...\
+\cf0     (1+(1i*omega*tau0*exp(E_eff/Tk_ref)).^(1-(c0+c1*T_ref))));\
+tan_ref = (a02+a12*T_ref) + real((b02+b12*T_ref) ./ \cf4 ...\
+\cf0     (1+(1i*omega*tau02*exp(E_eff2/Tk_ref)).^(1-(c02+c12*T_ref))));\
+eps_imag_ref = max(k_ref*tan_ref,1e-9);\
+\
+\cf3 %% ============================================================\
+% LAYER HEIGHT OPTIMIZATION\
+%% ============================================================\
+\cf0 h_vec = linspace(0.001,0.03,80);\
+total_time = nan(size(h_vec));\
+heat_time_each_layer = nan(size(h_vec));\
+\
+\cf4 for \cf0 ii = 1:length(h_vec)\
+\
+    h = h_vec(ii);\
+    N_layers = ceil(tile_thickness/h);\
+    V = A_tile*h;\
+\
+    \cf3 % Initial dielectric estimate for electric field requirement\
+\cf0     eps_imag_est = epsLoss_comp;\
+    Ereq = sqrt((Psys*eta)/(V*omega*eps0*max(eps_imag_est,1e-9)));\
+\
+    T = Tamb_C;\
+    t = 0;\
+\
+    \cf4 while \cf0 T < targetTemp && t < t_max\
+\
+        Tk = T + 273.15;\
+\
+        k_cc = (a0+a1*T) + real((b0+b1*T) ./ \cf4 ...\
+\cf0             (1+(1i*omega*tau0*exp(E_eff/Tk)).^(1-(c0+c1*T))));\
+\
+        tan_cc = (a02+a12*T) + real((b02+b12*T) ./ \cf4 ...\
+\cf0             (1+(1i*omega*tau02*exp(E_eff2/Tk)).^(1-(c02+c12*T))));\
+\
+        eps_imag_cc = max(k_cc*tan_cc,1e-9);\
+\
+        \cf3 % Composition-based loss with original temperature dependence\
+\cf0         eps_imag_local = epsLoss_comp*(eps_imag_cc/eps_imag_ref);\
+        eps_real_local = max(epsReal_comp*(k_cc/max(k_ref,1e-9)),1e-6);\
+\
+        \cf3 % Penetration depth using eps' and eps'' approximation\
+\cf0         lossRatio = eps_imag_local/eps_real_local;\
+        delta = lambda/(2*pi*sqrt(2*eps_real_local)*sqrt(max(sqrt(1+lossRatio^2)-1,1e-9)));\
+        eta_pen = 1/(1 + h/max(delta,1e-6));\
+\
+        P_vol = omega*eps0*eps_imag_local*(Ereq^2);\
+        P_vol = P_vol*eta_pen;\
+\
+        q_rad = eps_rad*sigma_SB*(Tk^4 - T_env_K^4)*F_view;\
+        q_rad = q_rad/max(h,1e-4);\
+\
+        k_mold = 1.2;\
+        q_cond = k_mold*(T - Tamb_C)/max(h,1e-3);\
+\
+        P_net = max(P_vol - q_rad - q_cond,0);\
+        dTdt = P_net/(rho*Cp);\
+\
+        T = T + dTdt*dt;\
+        t = t + dt;\
+    \cf4 end\
+\
+\cf0     manufacturing_penalty = 0.05*(0.002/h);\
+\
+    \cf4 if \cf0 T >= targetTemp\
+        heat_time_each_layer(ii) = t;\
+        total_time(ii) = N_layers*(t + t_delay)*(1 + manufacturing_penalty);\
+    \cf4 else\
+\cf0         total_time(ii) = NaN;\
+    \cf4 end\
+end\
+\
+\cf3 %% ============================================================\
+% SAFE OPTIMIZATION\
+%% ============================================================\
+\cf0 valid = isfinite(total_time);\
+\
+\cf4 if \cf0 ~any(valid)\
+    error(\cf2 'No valid solutions found. Try increasing power, increasing max time, or lowering target temperature.'\cf0 );\
+\cf4 end\
+\
+\cf0 h_valid = h_vec(valid);\
+t_valid = total_time(valid);\
+[min_time, idx_rel] = min(t_valid);\
+best_h = h_valid(idx_rel);\
+best_N = ceil(tile_thickness/best_h);\
+best_layer_heat_time = heat_time_each_layer(h_vec == best_h);\
+\
+\cf3 %% ============================================================\
+% OUTPUT\
+%% ============================================================\
+\cf0 fprintf(\cf2 '\\n----------- COMPOSITION / MICROWAVE INPUTS -----------\\n'\cf0 );\
+fprintf(\cf2 'Microwave Frequency: %.1f MHz\\n'\cf0 ,freqMHz);\
+fprintf(\cf2 'Wavelength: %.4f m\\n'\cf0 ,lambda);\
+fprintf(\cf2 'Effective Permittivity: %.3f - j%.3f\\n'\cf0 ,epsReal_comp,epsLoss_comp);\
+fprintf(\cf2 'Loss Tangent: %.5f\\n'\cf0 ,lossTan_comp);\
+fprintf(\cf2 'Single-Pass Absorption: %.2f %%\\n'\cf0 ,singlePassAbs*100);\
+fprintf(\cf2 'Effective Container Absorption: %.2f %%\\n'\cf0 ,totalAbsorption*100);\
+fprintf(\cf2 'Source Power Used: %.2f W\\n'\cf0 ,Psys);\
+fprintf(\cf2 'Coupling Efficiency Used: %.2f %%\\n'\cf0 ,couplingEfficiency*100);\
+fprintf(\cf2 'Coupling x Absorption Efficiency Used: %.4f\\n'\cf0 ,eta);\
+fprintf(\cf2 'Raw Absorbed Power: %.2f W\\n'\cf0 ,absorbedPowerRaw);\
+fprintf(\cf2 'Calibrated Absorbed Power Used in Figure 1: %.2f W\\n'\cf0 ,absorbedPower);\
+fprintf(\cf2 'Final Figure 1 Temperature: %.1f C\\n'\cf0 ,Tcurve(end));\
+\
+\cf4 if \cf0 isnan(timeToSinter)\
+    fprintf(\cf2 'Figure 1 did not reach %.0f C in %.1f min.\\n'\cf0 ,sinterLow,tEnd/60);\
+\cf4 else\
+\cf0     fprintf(\cf2 'Figure 1 time to %.0f C: %.2f min\\n'\cf0 ,sinterLow,timeToSinter);\
+\cf4 end\
+\
+\cf0 fprintf(\cf2 '\\nFinal Composition:\\n'\cf0 );\
+\cf4 for \cf0 ii = 1:length(materials)\
+    fprintf(\cf2 '%s: %.2f %%\\n'\cf0 ,materials\{ii\},composition(ii)*100);\
+\cf4 end\
+\
+\cf0 fprintf(\cf2 '\\n========== FINAL LAYER OPTIMIZATION ==========' \cf0 );\
+fprintf(\cf2 '\\nTarget temperature: %.1f C\\n'\cf0 ,targetTemp);\
+fprintf(\cf2 'Best layer height: %.5f m\\n'\cf0 ,best_h);\
+fprintf(\cf2 'Best layer height: %.2f mm\\n'\cf0 ,best_h*1000);\
+fprintf(\cf2 'Number of layers: %d\\n'\cf0 ,best_N);\
+fprintf(\cf2 'Heating time per layer at optimum: %.2f s\\n'\cf0 ,best_layer_heat_time);\
+fprintf(\cf2 'Total time: %.2f s (%.2f hr)\\n'\cf0 ,min_time,min_time/3600);\
+fprintf(\cf2 '==============================================\\n'\cf0 );\
+\
+\cf3 %% ============================================================\
+% FIGURE 1: TEMPERATURE CURVE\
+%% ============================================================\
+\cf0 figure(1);\
+hold \cf2 on\cf0 ; grid \cf2 on\cf0 ;\
+\
+\cf3 % Gray background band shows the full sintering temperature range.\
+\cf0 patch([0 max(time)/60 max(time)/60 0], \cf4 ...\
+\cf0       [sinterLow sinterLow sinterHigh sinterHigh], \cf4 ...\
+\cf0       [0.85 0.85 0.85], \cf4 ...\
+\cf0       \cf2 'FaceAlpha'\cf0 ,0.35, \cf4 ...\
+\cf0       \cf2 'EdgeColor'\cf0 ,\cf2 'none'\cf0 );\
+\
+\cf3 % Green highlighted time regions show when the actual temperature curve is\
+% inside the sintering range, between sinterLow and sinterHigh.\
+\cf0 inSinterRange = (Tcurve >= sinterLow) & (Tcurve <= sinterHigh);\
+startIdx = find(diff([false inSinterRange]) == 1);\
+endIdx   = find(diff([inSinterRange false]) == -1);\
+\
+greenPatchHandles = gobjects(0);\
+\cf4 for \cf0 jj = 1:length(startIdx)\
+    tStart = time(startIdx(jj))/60;\
+    tEndGreen = time(endIdx(jj))/60;\
+\
+    greenPatchHandles(end+1) = patch([tStart tEndGreen tEndGreen tStart], \cf4 ...\
+\cf0           [sinterLow sinterLow sinterHigh sinterHigh], \cf4 ...\
+\cf0           [0.25 0.80 0.25], \cf4 ...\
+\cf0           \cf2 'FaceAlpha'\cf0 ,0.45, \cf4 ...\
+\cf0           \cf2 'EdgeColor'\cf0 ,\cf2 'none'\cf0 );\
+\cf4 end\
+\
+\cf0 curveHandle = plot(time/60,Tcurve,\cf2 'LineWidth'\cf0 ,2);\
+\
+xlabel(\cf2 'Time (minutes)'\cf0 );\
+ylabel(\cf2 'Temperature (C)'\cf0 );\
+\cf3 %title('Figure 1: Regolith Temperature vs Time');\
+\
+\cf4 if \cf0 isempty(greenPatchHandles)\
+    legend(\cf2 'Sintering Temperature Range'\cf0 ,\cf2 'Temperature Curve'\cf0 ,\cf2 'Location'\cf0 ,\cf2 'northwest'\cf0 );\
+\cf4 else\
+\cf0     legend([greenPatchHandles(1) curveHandle], \cf4 ...\
+\cf0         \cf2 'Time Inside Sintering Range'\cf0 ,\cf2 'Temperature Curve'\cf0 ,\cf2 'Location'\cf0 ,\cf2 'northwest'\cf0 );\
+\cf4 end\
+\
+\cf0 ylim([Tamb_C max([max(Tcurve)*1.05 sinterHigh+100])]);\
+\
+\cf3 %% ============================================================\
+% FIGURE 2: COMPOSITION BAR CHART\
+%% ============================================================\
+\cf0 figure(2);\
+bar(composition*100);\
+grid \cf2 on\cf0 ;\
+set(gca,\cf2 'XTickLabel'\cf0 ,materials);\
+ylabel(\cf2 'Weight Percent (%)'\cf0 );\
+\cf3 %title('Figure 2: Normalized Regolith Composition');\
+\
+%% ============================================================\
+% FIGURE 3: OPTIMIZATION GRAPH\
+%% ============================================================\
+\cf0 figure(3);\
+plot(h_vec*1000,total_time/3600,\cf2 'LineWidth'\cf0 ,2);\
+hold \cf2 on\cf0 ; grid \cf2 on\cf0 ;\
+plot(best_h*1000,min_time/3600,\cf2 'ko'\cf0 ,\cf2 'MarkerFaceColor'\cf0 ,\cf2 'k'\cf0 ,\cf2 'MarkerSize'\cf0 ,7);\
+xlabel(\cf2 'Layer Height (mm)'\cf0 );\
+ylabel(\cf2 'Total Time (hours)'\cf0 );\
+\cf3 %title('Figure 3: Optimized Layer Height Using Composition-Based Dielectric Inputs');\
+\cf0 legend(\cf2 'Total Time'\cf0 ,\cf2 'Optimum'\cf0 ,\cf2 'Location'\cf0 ,\cf2 'best'\cf0 );\
+\
+\
+\cf3 %% ============================================================\
+% FIGURE 4: FeO / TiO2 COMPOSITION HEAT MAP\
+% Sweeps +/- 5 percentage points around the entered FeO and TiO2 values.\
+% Color shows time to reach the target temperature.\
+%% ============================================================\
+\
+\cf0 %\{\
+OLD CODE\
+FeO_heat_vec  = max(0,FeO-5):heatMapStep:min(20,FeO+5);\
+TiO2_heat_vec = max(0,TiO2-5):heatMapStep:min(15,TiO2+5);\
+\
+heat_time_map = nan(length(FeO_heat_vec),length(TiO2_heat_vec));\
+\
+fprintf('\\nGenerating FeO/TiO2 heat map...\\n');\
+\
+for aa = 1:length(FeO_heat_vec)\
+    for bb = 1:length(TiO2_heat_vec)\
+\
+        FeO_h = FeO_heat_vec(aa);\
+        TiO2_h = TiO2_heat_vec(bb);\
+\
+        if FeO_h + TiO2_h >= 100\
+            continue\
+        end\
+\
+        remaining_h = 100 - FeO_h - TiO2_h;\
+        scale_h = remaining_h/(baseSiO2 + baseAl2O3 + baseMgO + baseCaO);\
+\
+        SiO2_h  = baseSiO2*scale_h;\
+        Al2O3_h = baseAl2O3*scale_h;\
+        MgO_h   = baseMgO*scale_h;\
+        CaO_h   = baseCaO*scale_h;\
+\
+        comp_h = [SiO2_h Al2O3_h MgO_h CaO_h FeO_h TiO2_h]/100;\
+\
+        epsEff_h = sum(comp_h'.*epsVals);\
+        epsReal_h = real(epsEff_h);\
+        epsLoss_h = -imag(epsEff_h);\
+\
+        nComplex_h = sqrt(epsEff_h);\
+        alpha_h = (2*pi/lambda)*abs(imag(nComplex_h));\
+\
+        singlePassAbs_h = 1 - exp(-2*alpha_h*sampleThickness);\
+\
+        totalAbsorption_h = 0;\
+        remainingPower_h = 1;\
+\
+        for rr = 1:numReflections\
+            absorbed_h = remainingPower_h*singlePassAbs_h;\
+            totalAbsorption_h = totalAbsorption_h + absorbed_h;\
+            remainingPower_h = remainingPower_h*(1 - singlePassAbs_h)*reflectionEfficiency;\
+        end\
+\
+        eta_h = couplingEfficiency*totalAbsorption_h;\
+        absorbedPowerRaw_h = Psys*eta_h;\
+\
+        % Same calibration blend used in Figure 1, but recalculated for\
+        % each FeO/TiO2 point so composition changes affect heat time.\
+        absorbedPower_h = 0.5*absorbedPowerRaw_h + 0.5*calibratedPower;\
+\
+        T_h = Tamb_C;\
+        t_h = 0;\
+\
+        while T_h < targetTemp && t_h < t_max\
+            TprevK_h = T_h + 273.15;\
+            Prad_h = epsilon_small*sigma_SB*surfaceArea*(TprevK_h^4 - T_env_K^4)*F_view;\
+            Pnet_h = max(absorbedPower_h - Prad_h,0);\
+            dTdt_h = Pnet_h/(sampleMass*cp_small);\
+            T_h = T_h + dTdt_h*dt;\
+            t_h = t_h + dt;\
+        end\
+\
+        if T_h >= targetTemp\
+            heat_time_map(aa,bb) = t_h/60;  % minutes\
+        else\
+            heat_time_map(aa,bb) = NaN;\
+        end\
+    end\
+end\
+\
+figure(4);\
+imagesc(TiO2_heat_vec,FeO_heat_vec,heat_time_map,'AlphaData',isfinite(heat_time_map));\
+set(gca,'YDir','normal');\
+set(gca,'Color',[0 0 0]);\
+colormap(jet);\
+cb = colorbar;\
+ylabel(cb,sprintf('Time to %.0f C (minutes)',targetTemp));\
+xlabel('TiO2 Concentration (%)');\
+ylabel('FeO Concentration (%)');\
+title(sprintf('Figure 4: Time-to-Target Heat Map, Step = %.3g%%',heatMapStep));\
+grid on;\
+\
+hold on;\
+plot(TiO2,FeO,'kp','MarkerFaceColor','w','MarkerSize',12);\
+text(TiO2,FeO,'  Input','Color','w','FontWeight','bold');\
+\
+finiteHeatTimes = heat_time_map(isfinite(heat_time_map));\
+if ~isempty(finiteHeatTimes)\
+    caxis([min(finiteHeatTimes) max(finiteHeatTimes)]);\
+end\
+%\}\
+\
+fprintf(\cf2 '\\n--- Figure 4 Heat Map Analysis ---\\n'\cf0 );\
+heatMapStep = heatMapStep;\
+\
+\cf4 if \cf0 isempty(heatMapStep) || heatMapStep <= 0\
+    heatMapStep = 1;\
+\cf4 end\
+\
+\cf0 FeO_heat_vec  = max(0,FeO - 5):heatMapStep:min(20,FeO + 5);\
+TiO2_heat_vec = max(0,TiO2 - 5):heatMapStep:min(15,TiO2 + 5);\
+\
+heat_time_map = nan(length(TiO2_heat_vec),length(FeO_heat_vec));\
+\
+\cf4 for \cf0 aa = 1:length(FeO_heat_vec)\
+    \cf4 for \cf0 bb = 1:length(TiO2_heat_vec)\
+\
+        FeO_h  = FeO_heat_vec(aa);\
+        TiO2_h = TiO2_heat_vec(bb);\
+\
+        remaining_h = 100 - FeO_h - TiO2_h;\
+        scale_h = remaining_h/(baseSiO2 + baseAl2O3 + baseMgO + baseCaO);\
+\
+        composition_h = [baseSiO2*scale_h, baseAl2O3*scale_h, \cf4 ...\
+\cf0                          baseMgO*scale_h, baseCaO*scale_h, \cf4 ...\
+\cf0                          FeO_h, TiO2_h]/100;\
+\
+        epsEff_h = sum(composition_h'.*epsVals);\
+        nComplex_h = sqrt(epsEff_h);\
+        alpha_h = (2*pi/lambda)*abs(imag(nComplex_h));\
+\
+        singlePassAbs_h = 1 - exp(-2*alpha_h*sampleThickness);\
+\
+        totalAbsorption_h = 0;\
+        remainingPower_h = 1;\
+\
+        \cf4 for \cf0 rr = 1:numReflections\
+            absorbed_h = remainingPower_h*singlePassAbs_h;\
+            totalAbsorption_h = totalAbsorption_h + absorbed_h;\
+            remainingPower_h = remainingPower_h*(1 - singlePassAbs_h)*reflectionEfficiency;\
+        \cf4 end\
+\
+\cf0         eta_h = couplingEfficiency*totalAbsorption_h;\
+        absorbedPowerRaw_h = Psys*eta_h;\
+        absorbedPower_h = 0.5*absorbedPowerRaw_h + 0.5*calibratedPower;\
+\
+        T_h = Tamb_C;\
+        t_h = 0;\
+\
+        \cf4 while \cf0 T_h < targetTemp && t_h < t_max\
+            TprevK_h = T_h + 273.15;\
+\
+            Prad_h = epsilon_small*sigma_SB*surfaceArea*(TprevK_h^4 - T_env_K^4)*F_view;\
+            Pnet_h = max(absorbedPower_h - Prad_h,0);\
+\
+            dTdt_h = Pnet_h/(sampleMass*cp_small);\
+\
+            T_h = T_h + dTdt_h*dt;\
+            t_h = t_h + dt;\
+        \cf4 end\
+\
+\cf0         \cf4 if \cf0 T_h >= targetTemp\
+            heat_time_map(bb,aa) = t_h/60;\
+        \cf4 end\
+\cf0     \cf4 end\
+end\
+\
+\cf0 figure(4);\
+plot_heat_map = heat_time_map;\
+finiteHeatTimes = plot_heat_map(isfinite(plot_heat_map));\
+\
+\cf4 if \cf0 isempty(finiteHeatTimes)\
+    plot_heat_map(:) = 1;\
+\cf4 else\
+\cf0     plot_heat_map(isnan(plot_heat_map)) = max(finiteHeatTimes)*1.1;\
+\cf4 end\
+\
+\cf0 imagesc(FeO_heat_vec,TiO2_heat_vec,plot_heat_map);\
+set(gca,\cf2 'YDir'\cf0 ,\cf2 'normal'\cf0 );\
+hold \cf2 on\cf0 ; grid \cf2 on\cf0 ;\
+\
+colormap(jet);\
+cb = colorbar;\
+ylabel(cb,sprintf(\cf2 'Time to %.0f C (minutes)'\cf0 ,targetTemp));\
+\
+xlabel(\cf2 'FeO Concentration (%)'\cf0 );\
+ylabel(\cf2 'TiO2 Concentration (%)'\cf0 );\
+\cf3 %title(sprintf('Figure 4: FeO/TiO2 Time-to-Target Heat Map, Step = %.3g%%',heatMapStep));\
+\
+\cf0 failedMask = isnan(heat_time_map);\
+[rowFail,colFail] = find(failedMask);\
+\
+\cf4 for \cf0 kk = 1:length(rowFail)\
+    rectangle(\cf2 'Position'\cf0 , \cf4 ...\
+\cf0         [FeO_heat_vec(colFail(kk)) - heatMapStep/2, \cf4 ...\
+\cf0          TiO2_heat_vec(rowFail(kk)) - heatMapStep/2, \cf4 ...\
+\cf0          heatMapStep, heatMapStep], \cf4 ...\
+\cf0          \cf2 'FaceColor'\cf0 ,\cf2 'k'\cf0 , \cf4 ...\
+\cf0          \cf2 'EdgeColor'\cf0 ,\cf2 'none'\cf0 );\
+\cf4 end\
+\cf0 fprintf(\cf2 'Heat map complete. Blue = shorter time, red = longer time. Black = target not reached.\\n'\cf0 );\
+Cp_regolith\
+\
+\cf3 % [1] Meek, T. T., Vaniman, D. T., and Duke, M. B., "Hot Pressing of Lunar Soil Simulants for the Fabrication of Structural Components," Journal of Aerospace Engineering, Vol. 1, No. 4, 1988, pp. 188\'96196.\
+% [2] Taylor, L. A., Pieters, C. M., Keller, L. P., Morris, R. V., McKay, D. S., Patchen, A., and Wentworth, S., "Ferromagnetic Resonance of Lunar Soil Nanophase Iron," Journal of Geophysical Research: Planets, Vol. 106, No. E11, 2001, pp. 27985\'9627999.\
+% [3] Lim, S., Anand, M., Taylor, L. A., and Meek, T. T., "Microwave Sintering of Lunar Soil: Properties, Theory, and Practice," Journal of Aerospace Engineering, Vol. 23, No. 3, 2010, pp. 151\'96158.\
+% [4] Allan, S. M., Radlinska, A., and Nejat, G., "Microwave Processing of Lunar Regolith Simulant for In-Situ Resource Utilization," Acta Astronautica, Vol. 126, 2016, pp. 73\'9680.\
+% [5] Carrier, W. D., Olhoeft, G. R., and Mendell, W., "Physical Properties of the Lunar Surface," Lunar Sourcebook: A User\'92s Guide to the Moon, Cambridge University Press, New York, 1991, pp. 475\'96594.\
+% [6] Heiken, G., Vaniman, D., and French, B. M., Lunar Sourcebook: A User\'92s Guide to the Moon, Cambridge University Press, New York, 1991.\
+% [7] NASA, "JSC-1A Lunar Regolith Simulant Characteristics," NASA Johnson Space Center Technical Report, Houston, TX, 2005.\
+% [8] Park, J., and Tucker, D., "Thermal Properties of Lunar Regolith Simulants at High Temperature," NASA Technical Memorandum NASA/TM-2018-220037, 2018.\
+% [9] Incropera, F. P., DeWitt, D. P., Bergman, T. L., and Lavine, A. S., Fundamentals of Heat and Mass Transfer, 7th ed., John Wiley & Sons, Hoboken, NJ, 2011.\
+% [10] Von Hippel, A. R., Dielectric Materials and Applications, MIT Press, Cambridge, MA, 1954.\
+% [11] Meredith, R. J., Engineers\'92 Handbook of Industrial Microwave Heating, Institution of Engineering and Technology, London, U.K., 1998.\
+% [12] Sutton, G. P., and Biblarz, O., Rocket Propulsion Elements, 9th ed., John Wiley & Sons, Hoboken, NJ, 2017.\
+\
+}
